@@ -1,0 +1,105 @@
+name: NexusAI CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # ── Backend: lint + unit tests ──────────────────────────────────────────────
+  backend:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --dev
+
+      - name: Run backend tests
+        working-directory: backend
+        env:
+          SECRET_KEY: "ci-secret-key-that-is-long-enough-32ch"
+          DATABASE_URL: "postgresql+asyncpg://skip:skip@localhost/skip"
+        run: uv run pytest tests/ -v --tb=short
+
+  # ── ML: unit tests for scorer + router_logic ─────────────────────────────────
+  ml-tests:
+    name: ML Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install backend dependencies (ml modules share backend venv)
+        working-directory: backend
+        run: uv sync --dev
+
+      - name: Run ML + router_logic tests
+        working-directory: backend
+        env:
+          SECRET_KEY: "ci-secret-key-that-is-long-enough-32ch"
+          DATABASE_URL: "postgresql+asyncpg://skip:skip@localhost/skip"
+        run: |
+          uv run pytest tests/test_risk_scorer.py tests/test_router_logic.py -v --tb=short
+
+  # ── Frontend: type-check + Vitest unit tests ───────────────────────────────
+  frontend:
+    name: Frontend Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: TypeScript type-check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Run Vitest unit tests
+        working-directory: frontend
+        run: npm run test:unit -- --run
+
+  # ── Docker build smoke test ────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t nexusai-backend:ci ./backend
+
+      - name: Build frontend image
+        run: docker build -t nexusai-frontend:ci ./frontend

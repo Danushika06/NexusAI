@@ -1,0 +1,131 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+      POSTGRES_DB: nexusai
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c work_mem=2MB
+      -c maintenance_work_mem=32MB
+      -c max_connections=20
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexusai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nexus:nexus@postgres:5432/nexusai
+      MCP_STUDENT_DB_URL: http://mcp-student-db:9001
+      MCP_JOB_MARKET_URL: http://mcp-job-market:9002
+      MCP_RESOURCE_RAG_URL: http://mcp-resource-rag:9003
+      MCP_COUNSELOR_ALERTS_URL: http://mcp-counselor-alerts:9004
+      PYTHONPATH: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+    volumes:
+      - ./backend/src:/app/src
+      - ./ml:/app/ml
+      - ./rag:/app/rag
+      - ./agents:/app/agents
+      - ./shared:/app/shared
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+  mcp-student-db:
+    build:
+      context: ./mcp-servers/student-db-server
+      dockerfile: Dockerfile
+    ports:
+      - "9001:9001"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nexus:nexus@postgres:5432/nexusai
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+
+  mcp-job-market:
+    build:
+      context: ./mcp-servers/job-market-server
+      dockerfile: Dockerfile
+    ports:
+      - "9002:9002"
+    env_file:
+      - .env
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+
+  mcp-resource-rag:
+    build:
+      context: ./mcp-servers/resource-rag-server
+      dockerfile: Dockerfile
+    ports:
+      - "9003:9003"
+    volumes:
+      - ./rag:/app/rag
+    deploy:
+      resources:
+        limits:
+          memory: 150M
+
+  mcp-counselor-alerts:
+    build:
+      context: ./mcp-servers/counselor-alerts-server
+      dockerfile: Dockerfile
+    ports:
+      - "9004:9004"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://nexus:nexus@postgres:5432/nexusai
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 80M
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: on-failure
+    deploy:
+      resources:
+        limits:
+          memory: 30M
+
+volumes:
+  pgdata:
